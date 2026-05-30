@@ -1,0 +1,688 @@
+---
+title: "Advance analytics and Machine learning Assignment"
+Name: Siddharth Shekhar Singh(40425947)
+date: "2024-03-01"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+#INTRODUCTION
+
+The assignment delves into advanced analytics and machine learning, focusing on several aspects of data analysis using the R programming language. It begins with the setup and importation of necessary libraries, such as SmartEDA, tidyverse, glmnet, and others, which are fundamental for data manipulation, visualization, and modeling. The dataset is loaded and processed, including handling of character columns and summarization of missing values.
+The core of the assignment revolves around statistical modeling and machine learning techniques. It includes:
+•	Train-test splitting for model validation.
+•	Lasso regression to identify critical predictors and manage dimensionality.
+•	Logistic regression for binary outcome prediction.
+•	KNN (K-nearest neighbours) for classification tasks.
+•	Cross-validation for assessing model reliability.
+For each method, detailed implementation steps are followed by analysis and interpretation of the results. The assignment aims to uncover insights into product issues consequences through exploratory data analysis, graphical data exploration, and predictive modelling. It concludes with evaluations of model performances and comparisons between different approaches to identify the most suitable predictive models for the dataset at hand.
+This thorough exploration encompasses data pre-processing, exploratory analysis, feature selection, and the application of various predictive models to gain insights into the underlying patterns of the dataset, highlighting the power of statistical learning in understanding and predicting outcomes based on historical data.
+
+#Importing the libraries
+```{r importing the required libraries}
+
+library(SmartEDA)
+library(tidyverse)
+library(glmnet)
+library(caTools)
+library(MASS)
+library(car)
+library(dplyr)
+library(pROC)
+library(kableExtra)
+library(caret)
+library(viridis)
+library(ggplot2)
+
+```
+
+#1-Loading the dataset
+```{r Loading and displaying the data}
+# Upload the data
+data <- read_csv(file.choose())
+
+# To Display the data
+head(data)
+
+# Removed the ID column
+data <- subset(data, select = -c(ID_non_uniq))
+
+
+print("Success - Data Loaded !!")
+```
+#REQUIRED FUNCTIONS
+
+###Train - Test Split
+```{r creating the train_test_Split function}
+
+train_test_split <- function(sub){
+  set.seed(40425947)
+  
+  # Generate random indices for splitting
+  split_indices <- sample(nrow(sub), size = floor(0.7 * nrow(sub)), replace = FALSE)
+  
+  # Split data based on indices
+  train <- sub[split_indices, ]
+  test <- sub[-split_indices, ]
+  
+  ### Splitting the train-test data into x_train, y_train, x_test, and y_test.
+  x_train <- model.matrix(Issue_Consequence_new ~ . - 1, data = train)
+  y_train <- ifelse(train$Issue_Consequence_new == "Injury", 1, 0)
+  
+  x_test <- model.matrix(Issue_Consequence_new ~ . - 1, data = test)
+  y_test <- ifelse(test$Issue_Consequence_new == "Injury",1,0)
+  
+  train$Issue_Consequence_new <- as.factor(ifelse(train$Issue_Consequence_new == "Injury", 1, 0))
+  test$Issue_Consequence_new <- as.factor(ifelse(test$Issue_Consequence_new == "Injury", 1, 0))
+  
+  return(list(X_train = x_train, y_train = y_train, x_test = x_test, y_test = y_test, train = train, test = test)) 
+}
+
+
+```
+
+
+### Lasso Regression Model
+```{r lasso-Regression}
+
+lasso <- function(x_train, y_train, x_test, y_test, subsets){
+  
+
+  grid = 10^seq(10, -2, length = 100)
+  cvmodel_A01 <-  cv.glmnet(x_train, y_train, alpha = 1 , family = "binomial", type.measure = "deviance", nfolds = 10)
+  
+  plot_cvmodel <- plot(cvmodel_A01)
+  plot_cvmodel
+  
+  best_lambda <- cvmodel_A01$lambda.min
+  best_lambda
+  
+  # fitting lasso model on train set
+  set.seed(40425947)
+  lasso.mod <- glmnet(x_train, y_train,family="binomial",type.measure = "deviance", alpha=1, lambda=grid)
+  plot(lasso.mod, label=TRUE)
+  plot(lasso.mod, xvar="lambda", label=TRUE, lwd=6)
+  
+  plot_lasso.mod <- plot(lasso.mod)
+  plot_lasso.mod
+  
+  set.seed(40425947)
+  lasso.pred <- predict(lasso.mod,family="binomial", s = best_lambda, newx = x_test)
+  pred_class <- ifelse(lasso.pred >= 0.5, 1, 0)
+  
+  
+  accuracy <- mean(pred_class == as.numeric(y_test))
+  accuracy
+  
+  set.seed(40425947)
+  X <- subsets %>% dplyr::select(-c(Issue_Consequence_new))
+  y <- subsets$Issue_Consequence_new
+  
+  
+  out = glmnet(X, y, alpha=1, family="binomial", type.measure = "deviance", lambda = grid)
+  out
+  
+  set.seed(40425947)
+  lasso.coef <-  predict(out, type="coefficients", s=best_lambda)[1:76,]
+  lc <- lasso.coef[lasso.coef!=0]
+  
+  lc_df <- data.frame(variable = names(lc)[-1], coefficient = lc[-1])
+  print(lc_df)
+  
+  top10 <- head(lc_df[order(abs(lc_df$coefficient), decreasing = TRUE), ], 10)
+  top10
+  
+  plot_top_10 <- ggplot(lc_df, aes(x = variable, y = coefficient)) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    theme(axis.text.x = element_text(size=6, angle = 90, vjust = 0.5, hjust=1)) +
+    xlab("Variable") + ylab("Coefficient")
+    
+  plot_top_10
+  
+  return(list(out = out, 
+              plot_cvmodel= plot_cvmodel,best_lambda = best_lambda,plot_lasso.mod =plot_lasso.mod,accuracy = accuracy,top10 = top10,plot_top_10 =  plot_top_10,lc_df = lc_df))
+
+}
+
+```
+
+##Logistic Regression
+```{r logistic Regression }
+
+logistic_Regression <- function(formula,train, test, y_test){
+  
+    glm.fits <- glm(formula, data = train, family = "binomial")
+    summary(glm.fits)
+    
+    # prediction on test dataset using trained model
+    predictions <- predict.glm(glm.fits, test,family = "binomial", type="response") 
+    
+    # changing numeric values of predictions into factor ;> 0.5 as 1 and <0.5 as 0
+    class_predict <- as.factor(ifelse(predictions > 0.5, 1, 0))  
+    class_predict
+    
+    accuracy_logistic_regression <- mean(class_predict == y_test)
+    cat("The Accuracy of the Logistic Regression is :", accuracy_logistic_regression * 100)
+    
+    # predicted probabilities
+    pred.prob <- ifelse(fitted(glm.fits) > 0.5, 1, 0)
+    head(data.frame(class_predict, test$Issue_Consequence_new))
+    
+    # Analysing the residuals
+    # Examining the influential cases
+    # Examining Multicollinearity
+    
+    vif(glm.fits)
+    
+    outcome_lr <- postResample(class_predict, as.factor(y_test)) 
+    acc_lr <- outcome_lr["Accuracy"]
+    acc_lr
+    
+    # Confusion Matrix - to check True/false positive/negatives]
+    cm_lr <- confusionMatrix(data=class_predict, as.factor(y_test))  
+    cm_lr  
+    
+    cat("The accuracy of Logistic Regression model is", acc_lr, "\n") 
+    
+    # Plot of confusion matrix
+    plot(cm_lr$table, col = c("white", "blue"), 
+         main = paste("Confusion Matrix\n Logistic Regression"))
+    
+    
+    # extracting coeficients of LR model
+    coef_summary <- summary(glm.fits)$coef
+    kable(coef_summary, caption = "Logistic Regression Coefficients", 
+          align = "c", booktabs = TRUE)
+    
+    
+    # ROC Curve
+    roc_lr <- roc(response = as.numeric(y_test), predictor = as.numeric(class_predict))
+    plot(roc_lr, main = "ROC Curve of LR", col = "blue", print.auc = TRUE, legacy.axes = TRUE)
+    
+    
+    
+
+}
+
+```
+
+
+# KNN
+```{r KNN}
+
+knn_classification <- function(train_data, test_data, formula, k_values) {
+  # Define train control
+  trControl <- trainControl(method = "cv", number = 10)
+  
+  # Fit KNN model
+  set.seed(40425947)  
+  fit_knn <- train(formula, 
+                   data = train_data, 
+                   method = "knn", 
+                   trControl = trControl, 
+                   tuneGrid = expand.grid(k = k_values), 
+                   preProcess = c("center", "scale"),  
+                   metric = "Accuracy")
+  
+  # Predictions on test data
+  predictions_knn <- predict(fit_knn, newdata = test_data)
+  
+  # Post-Resample Accuracy
+  acc_knn <- postResample(test_data$Issue_Consequence_new, predictions_knn)["Accuracy"]
+  
+  # Confusion Matrix
+  cm_knn <- confusionMatrix(test_data$Issue_Consequence_new, predictions_knn)
+  
+  # Plot of confusion matrix
+  plot(cm_knn$table, col = c("white", "blue"), 
+       main = paste("Confusion Matrix\n KNN"))
+  
+  # ROC Curve
+  roc_knn <- roc(test_data$Issue_Consequence_new, as.numeric(predictions_knn))
+  plot(roc_knn, main = "ROC Curve of KNN", col = "blue", print.auc = TRUE, legacy.axes = TRUE)
+  
+  return(list(model = fit_knn,
+              post_resample_accuracy = acc_knn,
+              confusion_matrix = cm_knn,
+              roc_curve = roc_knn))
+}
+
+```
+
+#kfold
+```{r K fold for logistic Regression fold CV, echo=TRUE, include=TRUE}
+# K-fold value here is 10
+trControl <- trainControl(method  = "cv",number  = 10)
+
+
+# fitting LR with different k values 1:10
+kfold_lr <- function(subset){
+  fit_lr <- train(as.factor(Issue_Consequence_new)~.,
+             method     = "glm",
+             tuneGrid   = NULL,
+             trControl  = trControl,
+             data       =  data,
+             metric = "Accuracy")
+
+  
+  return(fit_lr$results) 
+} 
+
+
+```
+
+
+#####################################################################-REPORT-###########################################################################################
+
+#2"Summarizing Blank and Zero Values in a Dataset"
+
+```{r - summary of blank and zero values in the dataset}
+# Load the necessary library
+library(dplyr)
+
+# Function to summarize NA and 0 values for each column
+summarize_blanks_zeros <- function(df) {
+  summary_df <- df %>% summarise_all(~ sum(is.na(.) | . == 0))
+  return(summary_df)
+}
+
+# Apply the function to dataset
+summary_blanks_zeros <- summarize_blanks_zeros(data)
+
+# View the summary
+print(summary_blanks_zeros)
+
+```
+
+
+
+#3"Converting Character Columns to Factors in Dataframe"
+```{r converting the columns of the dataset into factor variables}
+
+data <- data %>% mutate_if(sapply(data, is.character), as.factor)
+
+```
+
+
+
+#GRAPHICAL EXPLORATION OF product.field_description and top preditors
+```{r Graphically investigating the product.field_description and top Predictors}
+
+t <- table(data$product.field_description)
+
+barplot(t)
+
+filtered_dataset<- data %>%
+  group_by(product.field_description, product.issue.type) %>%
+  summarise(total_counts = n()) %>%
+  arrange(product.field_description, desc(total_counts)) %>%
+  mutate(rank = rank(desc(total_counts), ties.method = "min")) %>%
+  arrange(product.field_description, rank) %>% filter(rank <= 10)
+
+
+Clinical_Chemistry <- filtered_dataset %>% filter(product.field_description == "Clinical Chemistry") 
+
+unknown <- filtered_dataset %>% filter(product.field_description == "Unknown" )
+
+General_Hospital <- filtered_dataset %>% filter(product.field_description == "General Hospital" )
+
+
+Clinical_Chemistry_barplot <- ggplot(Clinical_Chemistry, aes(x = factor(product.issue.type), y = total_counts, fill = factor(product.issue.type))) +
+  geom_bar(stat = "identity") +
+  labs(x = "Product Issue Type", y = "Total Count" , title = "Top 10 Product Issue type for Clinical Chemistry") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_viridis(discrete = T, option = "A")
+Clinical_Chemistry_barplot
+
+unkown_barplot <- ggplot(unknown, aes(x = factor(product.issue.type), y = total_counts, fill = factor(product.issue.type))) +
+  geom_bar(stat = "identity") +
+  labs(x = "Product Issue Type", y = "Total Count", title = "Top 10 Product Issue type for Unknown") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_viridis(discrete = T, option = "H")
+
+unkown_barplot
+
+General_Hospital_barplot <- ggplot(General_Hospital, aes(x = factor(product.issue.type), y = total_counts, fill = factor(product.issue.type))) +
+  geom_bar(stat = "identity") +
+  labs(x = "Product Issue Type", y = "Total Count" , title = "Top 10 Product Issue type for General hospital") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_viridis(discrete = T, option = "A")
+General_Hospital_barplot
+
+```
+The bar plots generated for the top 10 product issue types within the product fields of Clinical Chemistry, Unknown, and General Hospital offer valuable insights into the distribution and frequency of product issues in these distinct areas. Here's an analysis of the insights derived from these visualizations:
+Clinical Chemistry
+Insight:For Clinical Chemistry, the bar plots show a range of issue types with different counts, indicating varying frequencies of issues within this field. Notably, some issue types (like those labeled 774, 833, and 956) have much higher counts, which could point to more common problems within this field. This might suggest that certain chemical products are more prone to issues or that there is a pattern in manufacturing defects or contamination in this category.
+
+General Hospital
+Insight: Like Clinical Chemistry, the General Hospital field shows a range of issue frequencies but with lower overall counts. This may reflect a smaller volume of products or possibly more effective quality assurance practices in products designed for hospital settings.
+
+Unknown
+Insight:The Unknown category also presents a range of issue types, but the counts are generally lower than those in Clinical Chemistry. This suggests that while there may be a variety of issues present, they occur with less frequency. This could imply better quality control or fewer reporting of issues, possibly due to less direct impact on consumer health or less stringent monitoring.
+
+The insights drawn from these bar plots not only shed light on the specific product issues prevalent in different fields but also highlight the importance of clear product categorization and detailed issue reporting. By focusing on fields with direct implications for patient care and safety, this analysis underlines the critical need for robust quality assurance and regulatory oversight in healthcare-related products.
+
+
+
+### Column Generation for the Descriptive Statistics
+
+```{r Column Generation for Descriptive statistics for entire dataset}
+last_year <- data %>% dplyr::select(starts_with("last_year"))
+last_two_year <- data %>% dplyr::select(starts_with("last_two_year"))
+last_four_year <- data  %>% dplyr::select(starts_with("last_four_year"))
+product <- data %>% dplyr::select(starts_with("product"))
+
+
+last_year_1 <-  cbind(last_year,  data$Proudct.issue.consequence)
+last_year_2 <- cbind(last_two_year, data$Proudct.issue.consequence)
+last_year_4 <- cbind(last_four_year, data$Proudct.issue.consequence)
+product_1 <- cbind(product, data$Proudct.issue.consequence)
+
+```
+
+## Descriptive Statistics of all the columns
+
+```{r Graphical exploration of the entire data set}
+SmartEDA::ExpCatViz(data = last_year_1, target = "data$Proudct.issue.consequence" )[1:3]
+
+SmartEDA::ExpCatViz(data = last_year_2, target = "data$Proudct.issue.consequence")[5:7]
+
+SmartEDA::ExpCatViz(data = last_year_4, target = "data$Proudct.issue.consequence")[1:3]
+
+SmartEDA::ExpCatViz(data = product_1, target = "data$Proudct.issue.consequence")
+```
+
+
+Exploring the data from the given dataset reveals several key insights that can inform our understanding of product issues and their consequences, like death, injury, malfunction, or no specified outcome. These insights have implications for quality control, risk management, and regulatory compliance in product manufacturing and distribution.
+
+Here are a few key observations:
+
+Product Issues and Consequences Relationship: The data visualizations suggest a strong relationship between unique product codes, manufacturer states, and countries with the frequency of product issues like injury, malfunction, and more severely, death. These insights highlight the importance of traceability in the product supply chain, as certain product batches or locations are more frequently associated with adverse outcomes.The 'product.manufacturer_state' and 'product.manufacturer_country' data slices provide a geographic perspective, pointing out that certain locations may have higher reports of product issues. This could reflect regional manufacturing practices, distribution patterns, or market penetration levels that influence the reported data. For example, if a particular state or country is overrepresented in the dataset for adverse product issues, it could warrant a deeper examination of local manufacturing standards, consumer usage, or reporting practices.
+
+
+Geographical Impact: The visualizations indicate significant regional disparities in product issue consequences, implying that manufacturer location is a potential indicator of product safety. This could be due to local manufacturing practices, the availability of quality materials, or varying enforcement of safety standards. In turn, this might necessitate targeted interventions in specific areas to mitigate risks.In examining the relationship between 'product.manufacturer_state' and the outcomes, the data depicted a notable variation in issue frequency by geographic location, hinting at potential regional differences in manufacturing practices or regulatory compliance. The selection of the 'product.manufacturer_country' field aimed to extend this geographic analysis to a global scale, thereby enabling a comparison of domestic and international safety trends.
+
+Reasons for Legal Announcements: The frequency of legal announcements related to product issues suggests that certain causes for these announcements are more prevalent, which might inform the prioritization of regulatory oversight. For instance, a high number of legal announcements in a specific area could indicate systemic problems that require attention from manufacturers and regulatory bodies.Considering the 'last_two_years_reason_for_legal_announcement_num_uniq' variable, it seems that certain legal announcements are more frequently associated with product issues
+
+Root Cause Analysis: The data points to certain root causes being more prevalent in product failures leading to legal consequences. Understanding these root causes is key to preventing future issues and improving overall product safety. Manufacturers might need to investigate these root causes more deeply and develop corrective actions to address them.For example.The variables such as 'last_year_all_product_codes_num_uniq' and 'last_year_brand_name_num_uniq' show varying degrees of association with different consequences, suggesting a relationship between the diversity of products or brands and the incidence of issues. It can be inferred that a wider range of product codes or brands could be correlated with an increased likelihood of product issues being reported. Moreover, this could indicate that certain product types or brands may be more prone to issues, or conversely, that they are simply more frequently used and hence more often implicated in reports.
+
+Product Field Descriptions: Different product field descriptions show varying levels of association with product issues. Fields like 'Clinical Chemistry' might be particularly sensitive due to their direct impact on health. This indicates the need for a more stringent regulatory framework and continuous monitoring in these fields to ensure public safety.
+
+Predictive Insights: By analyzing the frequency and type of product issues in relation to the product descriptions, manufacturers and stakeholders can identify patterns that may be predictive of future issues. This could enable proactive measures to prevent issues rather than reacting to them after they occur.
+
+Global Comparisons: The manufacturer country data provides a global perspective, suggesting that international standards might not be uniformly applied or enforced. Collaboration on a global scale might be required to ensure product safety across borders.
+
+In summary, these data visualizations underscore the interconnectivity between product safety issues, geographical manufacturing locations, and legal consequences.Moreover, these insights can drive policy changes and lead to the development of best practices that ensure consumer safety and maintain public trust in products, especially in high-stake fields like 'clinical-chemical' products.
+
+# Statistical learning Model Building 
+
+## 1) Barplot before defining the levels of target variable 
+
+```{r Before defining the target variable}
+target_before_def <- table(data$Proudct.issue.consequence) 
+ 
+barplot(target_before_def)
+
+
+data <- data %>% mutate(Issue_Consequence_new = case_when(
+  Proudct.issue.consequence == "Death" ~ "Malfunction",
+   Proudct.issue.consequence == "Other" ~ "Malfunction",
+   Proudct.issue.consequence == "No answer provided" ~ "Malfunction",
+  Proudct.issue.consequence == "Malfunction" ~ "Malfunction",
+  TRUE ~ "Injury")
+  )
+
+
+data <- data %>% dplyr::select(-c(Proudct.issue.consequence))
+
+
+
+```
+
+
+
+
+#Barplot after defining the levels of target variable
+```{r After defining the target variable}
+target_after_def <- table(data$Issue_Consequence_new)
+
+barplot(target_after_def, col = c("red","blue"))
+
+```
+#2.1Lasso regression
+In this phase of the assignment, the task is to  select one product.field_description from the dataset to investigate the impact of various predictors on outcomes. To manage the complexity and potential overfitting associated with a large dataset, the strategy involves dividing the dataset into manageable subsets for detailed analysis. In this context, the dataset has been segmented into three subsets: subset_1 comprises the first 16,000 records, subset_2 includes records from 16,001 to 32,000, and subset_3 encompasses records from 32,001 to 50,646. This division facilitates a focused approach to running Lasso regression models on each subset, allowing for the identification and comparison of critical predictors across different segments of the dataset.
+
+The use of Lasso regression is particularly apt for this task due to its ability to perform both variable selection and regularization, thereby enhancing the model's predictive accuracy and interpretability by eliminating non-informative predictors. By applying Lasso regression to each subset individually, students can uncover the top critical predictors within varying contexts of product.field_description, ensuring a comprehensive analysis that accounts for the dataset's inherent diversity. This methodological choice not only mitigates the risk of overfitting but also addresses the analytical challenges posed by datasets with a high dimensionality of predictors. The insights derived from these models will be instrumental in understanding the factors that significantly influence product outcomes, guiding future product development and quality control strategies.
+
+
+## Generation of Subsets
+```{r subset generation for Lasso}
+subset_1 <- data[1: 16000,]
+subset_2 <- data[16001:32000,]
+subset_3 <- data[32001:50646,]
+```
+
+
+
+#Created the train-test-split for the subsets
+```{r Created the train-test-split for the subsets}
+
+subset1_sets <- train_test_split(subset_1)
+subset2_sets <- train_test_split(subset_2)
+subset3_sets <- train_test_split(subset_3)
+
+```
+
+
+#2.1lasso for subset1
+```{r Lasso for subset1}
+lasso_subset1 <- lasso(x_train = subset1_sets$X_train, y_train = subset1_sets$y_train, x_test = subset1_sets$x_test,
+                       y_test =subset1_sets$y_test,subsets = subset_1)
+
+```
+#creating a summary plot showing the differences between sets of top 10 critical predictors identified across fields
+```{r plotting top 10 predictors of Lasso subset_1}
+
+lasso_subset1$top10
+lasso_subset1$plot_top_10
+
+
+```
+
+#2.2lasso for subset2
+```{r Lasso for subset2}
+lasso_subset2 <- lasso(x_train = subset2_sets$X_train, y_train = subset2_sets$y_train, x_test = subset2_sets$x_test,
+                       y_test =subset2_sets$y_test,subsets = subset_2)
+```
+
+
+#creating a summary plot showing the differences between sets of critical predictors identified across fields
+```{r plotting top 10 for subset2}
+
+lasso_subset2$top10
+lasso_subset2$plot_top_10
+```
+
+#2.3lasso for subset3
+```{r lasso for subset3}
+lasso_subset3 <- lasso(x_train = subset3_sets$X_train, y_train = subset3_sets$y_train, x_test = subset3_sets$x_test,
+                       y_test =subset3_sets$y_test,subsets = subset_3)
+
+```
+#creating a summary plot showing the differences between sets of critical predictors identified across fields
+```{r plot for lasso_subset 3}
+lasso_subset3$top10
+lasso_subset3$plot_top_10
+```
+
+#2.4Comparing lasso for all the three subsets
+```{r Comparative Study for all the three subsets}
+
+lasso_subset1$accuracy
+lasso_subset2$accuracy
+lasso_subset3$accuracy
+
+```
+
+```{r bar plot of lasso for all the three subsets}
+# Assuming lasso_subset1, lasso_subset2, lasso_subset3 have an 'accuracy' numeric field
+accuracy_values <- c(lasso_subset1$accuracy, lasso_subset2$accuracy, lasso_subset3$accuracy)
+names(accuracy_values) <- c("Subset 1", "Subset 2", "Subset 3")
+
+# Creating the bar plot
+barplot(accuracy_values, 
+        main="Accuracy of LASSO Subsets", 
+        xlab="Subset", 
+        ylab="Accuracy", 
+        col="skyblue",
+        ylim=c(0, 1))  # Assuming accuracy is a proportion between 0 and 1
+
+```
+#Findings -Lasso regression
+The Lasso regression analysis conducted on three distinct subsets of the dataset reveals significant insights into the critical predictors influencing the outcomes within the context of product safety and quality. For subset 1, the top predictors include variables related to legal announcements, product field descriptions, root cause descriptions, and the product's country of manufacture, indicating a complex interplay between regulatory actions, product characteristics, and geographical origins in determining product outcomes. Notably, the last_four_years_legal_announcementing_firm_num_uniq variable emerged as a significant positive predictor, suggesting that firms with a higher number of unique legal announcements in the past four years are associated with increased product issues, possibly reflecting ongoing compliance or quality challenges within these firms.
+In contrast, the analysis for subset 2 encountered convergence issues, suggesting that the predictors in this segment of the dataset might not significantly influence the outcomes or that the model's complexity exceeded the available data's capacity to provide meaningful insights. This indicates a potential need for further data preprocessing or model adjustment to achieve convergence and extract valuable insights.
+Subset 3's analysis, however, identified a different set of critical predictors, including the product report product code and the reporter's job code, among others. This points to the importance of product-specific characteristics and the reporting source's role in identifying product issues. The negative coefficient for last_four_years_legal_announcementing_firm_most_freq in subset 3 inversely relates the frequency of the most common legal announcements from firms with the outcome, suggesting that a higher frequency of certain types of legal announcements might be linked to a reduced incidence of certain product issues, potentially due to corrective measures taken in response.
+The accuracy scores from the Lasso regression models for subsets 1, 2, and 3 are 0.8071235, 0.9829167, and 0.9730068, respectively. The high accuracy scores for subsets 2 and 3, despite the convergence issue in subset 2, suggest that when the model successfully identifies critical predictors, it can significantly predict product outcome incidents. These results underscore the variability in predictor significance across different data segments and highlight the Lasso regression model's utility in pinpointing factors that most strongly influence product safety outcomes.
+
+#3.LOGISTIC REGRESSION
+#3.1logistic Regression subset1
+```{r logistic Regression subset1}
+#logistic regression for subset1
+LR_subset1 <- logistic_Regression(formula = Issue_Consequence_new ~ last_two_years_root_cause_description_most_freq+last_two_years_product_quantity_average_max+last_four_years_classification0_num_uniq+last_four_years_legal_announcementing_firm_num_uniq+last_four_years_product_quantity_average_max+last_four_years_decision_date_max_changes_in_product+manufacturer_contact_address_1+product.brand_name, train = subset1_sets$train , test = subset1_sets$test, y_test = subset1_sets$y_test)
+
+LR_subset1
+
+```
+
+
+```{r logistic Regression subset2}
+#logistic regression for subset2
+LR_subset2 <- logistic_Regression(formula = Issue_Consequence_new ~ last_two_years_root_cause_description_most_freq+last_two_years_product_quantity_average_max+last_four_years_classification0_num_uniq+last_four_years_legal_announcementing_firm_num_uniq+last_four_years_product_quantity_average_max+last_four_years_decision_date_max_changes_in_product+manufacturer_contact_address_1+product.brand_name, train = subset2_sets$train , test = subset2_sets$test, y_test = subset2_sets$y_test)
+
+
+LR_subset2
+
+```
+
+
+
+
+```{r logistic Regression subset3}
+#Logistic regression for subset3
+
+LR_subset3 <- logistic_Regression(formula = Issue_Consequence_new ~last_two_years_product_quantity_average_average+	
+last_four_years_legal_announcementing_firm_most_freq+	product.issue.type+	reporter_job_code	+product.manufacturer_city+	product.field_description	,train = subset3_sets$train, test = subset3_sets$test, y_test = subset3_sets$y_test)
+
+LR_subset3
+
+```
+```{r comparative demonstration of logistic regression for all the three subsets }
+accuracy_values <- c(LR_subset1$auc, LR_subset1$auc, LR_subset1$auc)
+names(accuracy_values) <- c("LR_Subset 1", "LR_Subset 2", "LR_Subset 3")
+
+# Creating the bar plot
+barplot(accuracy_values, 
+        main="Logistic regression Area under Curve of Subsets", 
+        xlab="Subset", 
+        ylab="Accuracy", 
+        col="skyblue",
+        ylim=c(0, 1))  # Assuming accuracy is a proportion between 0 and 1
+```
+
+
+#Short Summary of results and interpretations of the Logistic regression
+
+The logistic regression models run on the three subsets of the dataset offer a compelling overview of the model's performance in predicting product issue consequences across different segments.
+
+Subset 1 Results:
+
+The accuracy for subset 1 is reported at approximately 80%, with an Area Under the Curve (AUC) of 0.763. This indicates a good level of model performance, suggesting that the logistic regression model can distinguish between the controls and cases effectively, albeit with some room for improvement. The relatively lower AUC compared to other subsets might reflect the complexity or noise within this subset, possibly due to a more diverse range of predictors or less clear-cut relationships between predictors and outcomes.
+Subset 2 Results:
+
+For subset 2, the model achieved a notably high accuracy of 99.08%, accompanied by an AUC of 0.7916. Despite the high accuracy, the AUC, while decent, suggests that while the model is excellent at correctly classifying outcomes, its ability to rank predictions from least to most likely true positives is somewhat less robust. This high accuracy could result from a well-defined separation between cases and controls in this subset, possibly due to a subset of features that are very predictive of the outcome.
+Subset 3 Results:
+
+The accuracy for subset 3 is similarly high at 98.57%, but with a significantly higher AUC of 0.918, indicating superior model performance not only in classification accuracy but also in the model's ability to rank predictions confidently. This high AUC value suggests that subset 3 contains very predictive features that help distinguish between cases and controls with high reliability.
+
+
+
+#KNN
+```{r KNN subset1}
+#KNN subset-1
+knn_subset1 <- knn_classification(train_data = subset1_sets$train, test_data = subset1_sets$test, 
+                   formula = Issue_Consequence_new ~ last_two_years_root_cause_description_most_freq+last_two_years_product_quantity_average_max+last_four_years_classification0_num_uniq+last_four_years_legal_announcementing_firm_num_uniq+last_four_years_product_quantity_average_max+last_four_years_decision_date_max_changes_in_product+manufacturer_contact_address_1+product.brand_name,k_values = 1:10)
+
+knn_subset1
+
+```
+```{r KNN subset2}
+ #KNN-Subset 2
+knn_subset2 <-knn_classification(train_data = subset2_sets$train, test_data = subset2_sets$test, 
+                   formula = Issue_Consequence_new ~ last_two_years_root_cause_description_most_freq+last_two_years_product_quantity_average_max+last_four_years_classification0_num_uniq+last_four_years_legal_announcementing_firm_num_uniq+last_four_years_product_quantity_average_max+last_four_years_decision_date_max_changes_in_product+manufacturer_contact_address_1+product.brand_name,k_values = 1:10)
+
+knn_subset2
+```
+
+#```{r knn subset-3}
+#KNN Subset-3
+#knn_subset3<-knn_classification(train_data = subset3_sets$train, test_data = subset3_sets$test, 
+                   formula = Issue_Consequence_new ~ last_two_years_product_quantity_average_average+	
+#last_four_years_legal_announcementing_firm_most_freq+	product.issue.type+	reporter_job_code	+product.manufacturer_city+	product.field_description	#+product.product_report_product_code,k_values = 1:10)
+
+#knn_subset3
+
+
+# K-Fold Cross validation 
+
+* The model's capacity to generalise to new data that it hasn't seen before is evaluated using cross-validation. K-fold cross-validation enables the model to be trained on numerous different iterations of the data set, lowering the risk of overfitting. Additionally, because it makes use of all of the accessible data for training and testing, it offers a more precise estimate of the model's performance.  
+* The outcome of cross validation gives performance metrics like accuracy, Kappa, accuracy SD and Kappa SD.  
+
+
+```{r kfold cross validation for subset1 }
+kfold_lr_subset1 <- kfold_lr(subset1_sets)
+
+kfold_lr_subset1
+```
+
+
+```{r kfold cross validation for subset2}
+kfold_lr_subset2 <- kfold_lr(subset2_sets)
+kfold_lr_subset2
+```
+
+
+```{r kfold cross validation for subset3}
+kfold_lr_subset3 <- kfold_lr(subset3_sets)
+kfold_lr_subset3
+```
+
+# Accuracy and Performance of logistic regression and knn model 
+-Logistic Regression shows good performance with accuracies of 79.98%, 99.08%, and 98.57% across the three subsets respectively. The AUC values of 0.7586, 0.7916, and 0.918 indicate a decent ability to distinguish between the classes, with the third subset showing exceptional discrimination capability.
+-KNN (k=1) demonstrates superior accuracy, especially in subsets 2 and 3, with accuracy rates closely matching or surpassing those of logistic regression. The AUC for subset 1 is 0.8236, which surpasses the logistic regression model for the same subset, indicating a better model performance in terms of both accuracy and the ability to discriminate between the positive and negative classes.
+
+
+#Preferred Model
+Given the results, the preference between logistic regression and KNN might depend on the specific requirements of the task at hand:
+
+-If interpretability and understanding the influence of predictors are paramount, logistic regression would be preferable despite its slightly lower performance in some subsets. It offers a balance between accuracy and the ability to provide insights into the data.
+If the primary goal is maximizing accuracy and the ability to discriminate between classes, especially in more complex datasets, KNN could be favored, particularly with an appropriate choice of k. However, it requires careful preprocessing and consideration of the distance metric.
+In conclusion, logistic regression offers a good balance of interpretability and performance, making it suitable for scenarios where understanding the impact of predictors is crucial. On the other hand, KNN may be preferred in applications where the highest possible accuracy is the sole objective, assuming the complexity and lower interpretability of the model are acceptable trade-offs.
+
+
+
+
+
+
+
+
+
+
+
+
+
